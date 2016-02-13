@@ -15,7 +15,7 @@ namespace MarkovioBot
 		public static string email;
 		public static string password;
 
-		public static List<Tuple<long, List<string>>> servers;
+		public static List<Tuple<ulong, List<string>>> servers;
 
 		public static void Main(string[] args)
 		{
@@ -26,13 +26,13 @@ namespace MarkovioBot
 
 			client.MessageReceived += OnMessageReceived;
 
-			servers = JsonConvert.DeserializeObject<List<Tuple<long, List<string>>>>(
+			servers = JsonConvert.DeserializeObject<List<Tuple<ulong, List<string>>>>(
 				File.ReadAllText(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\MarkovioBot\serverData.json")
 			);
 
 			if (servers == null)
 			{
-				servers = new List<Tuple<long, List<string>>>();
+				servers = new List<Tuple<ulong, List<string>>>();
 			}
 
 			client.Connect(email, password);
@@ -43,13 +43,13 @@ namespace MarkovioBot
 
 		private static void OnMessageReceived(object sender, MessageEventArgs e)
 		{
-			List<long> serversInList = servers.Select(t => t.Item1).ToList();
+			List<ulong> serversInList = servers.Select(t => t.Item1).ToList();
 
-			if (e.Channel.IsPrivate || e.User.Id == client.CurrentUserId)
+			if (e.Channel.IsPrivate || e.User.Id == client.CurrentUser.Id)
 			{
 				return;
 			}
-			else if (e.Message.RawText.StartsWith("<@" + client.CurrentUserId + ">"))
+			else if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">"))
 			{
 				MarkovChain<string> chain = new MarkovChain<string>(1);
 				foreach (var messageFromServer in servers[serversInList.IndexOf(e.Server.Id)].Item2)
@@ -65,7 +65,7 @@ namespace MarkovioBot
 					servers[serversInList.IndexOf(e.Server.Id)].Item2.Add(e.Message.Text);
 				} else
 				{
-					servers.Add(new Tuple<long, List<string>>(e.Server.Id, new List<string>()));
+					servers.Add(new Tuple<ulong, List<string>>(e.Server.Id, new List<string>()));
 					servers[0].Item2.Add(e.Message.Text);
 				}
 			}
