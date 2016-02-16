@@ -57,7 +57,17 @@ namespace MarkovioBot
 					chain.Add(messageFromServer.Split(' '));
 				}
 
-				//client.SendMessage(e.Channel, string.Join(" ", chain.Chain(new Random())));
+                try
+                {
+                    e.Channel.SendMessage(string.Join(" ", chain.Chain(new Random())));
+                } catch (ArgumentException)
+                {
+                    try
+                    {
+                        e.Channel.SendMessage(string.Join(" ", chain.Chain(new Random())));
+                    }
+                    catch (ArgumentException) {}
+                }
 			} else
 			{
 				if (serversInList.Contains(e.Server.Id))
