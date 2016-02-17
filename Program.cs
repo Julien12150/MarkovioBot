@@ -93,7 +93,7 @@ namespace MarkovioBot
                                     finalChain.Add(word.Key, word.Value / totalWeight);
                                 }
 
-                                Console.WriteLine(totalWeight + " total entries in " + currentServer.Name);
+                                Console.WriteLine(totalWeight + " total entries in " + currentServer.Name + " for ``" + commandArgs.First() + "``");
 
                                 if (command.ToUpper().StartsWith("PROB"))
                                 {
@@ -120,6 +120,7 @@ namespace MarkovioBot
                             catch (Exception)
                             {
                                 Console.WriteLine("No data from " + currentServer.Name);
+                                Console.WriteLine();
                             }
                         }
                     }
@@ -150,15 +151,15 @@ namespace MarkovioBot
                 MarkovChain<string> chain = new MarkovChain<string>(1);
                 foreach (var messageFromServer in servers[serversInList.IndexOf(e.Server.Id)].Item2)
                 {
-                    chain.Add(messageFromServer.Split(' ','\n','\r'));
+                    chain.Add(messageFromServer.Split(' ', '\n', '\r'));
                 }
 
-                if (rawMessage.Split(' ','\n','\r').Length > 1)
+                if (rawMessage.Split(' ', '\n', '\r').Length > 1)
                 {
                     try
                     {
                         List<string> words = new List<string>();
-                        words.Add(rawMessage.Split(' ','\n','\r').Skip(1).First());
+                        words.Add(rawMessage.Split(' ', '\n', '\r').Skip(1).First());
 
                         string chained = rawMessage.Split(' ', '\n', '\r').Skip(1).First() + " " + string.Join(" ", chain.Chain(words, new Random()));
 
@@ -177,16 +178,18 @@ namespace MarkovioBot
                     }
                     catch (ArgumentException) { }
                 }
-			} else
-			{
-				if (serversInList.Contains(e.Server.Id))
-				{
-					servers[serversInList.IndexOf(e.Server.Id)].Item2.Add(e.Message.Text);
-				} else
-				{
-					servers.Add(new Tuple<ulong, List<string>>(e.Server.Id, new List<string>()));
-					servers[0].Item2.Add(e.Message.Text);
-				}
+            } else
+            {
+                if (!rawMessage.Contains("``")) {
+                    if (serversInList.Contains(e.Server.Id))
+                    {
+                        servers[serversInList.IndexOf(e.Server.Id)].Item2.Add(e.Message.Text);
+                    } else
+                    {
+                        servers.Add(new Tuple<ulong, List<string>>(e.Server.Id, new List<string>()));
+                        servers[0].Item2.Add(e.Message.Text);
+                    }
+                }
 			}
 
 			File.WriteAllText(
