@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Discord;
 using Markov;
 using Newtonsoft.Json;
@@ -45,28 +46,39 @@ namespace MarkovioBot
 		{
 			List<ulong> serversInList = servers.Select(t => t.Item1).ToList();
 
-			if (e.Channel.IsPrivate || e.User.Id == client.CurrentUser.Id)
-			{
-				return;
-			}
-			else if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">"))
-			{
-				MarkovChain<string> chain = new MarkovChain<string>(1);
-				foreach (var messageFromServer in servers[serversInList.IndexOf(e.Server.Id)].Item2)
-				{
-					chain.Add(messageFromServer.Split(' '));
-				}
+            string rawMessage = Regex.Replace(e.Message.RawText, @" + ", " ");
+            string formattedMessage = Regex.Replace(e.Message.Text, @" + ", " ");
 
-                try
+            if (e.Channel.IsPrivate || e.User.Id == client.CurrentUser.Id)
+            {
+                return;
+            }
+            else if (rawMessage.StartsWith("<@" + client.CurrentUser.Id + ">"))
+            {
+                MarkovChain<string> chain = new MarkovChain<string>(1);
+                foreach (var messageFromServer in servers[serversInList.IndexOf(e.Server.Id)].Item2)
                 {
-                    e.Channel.SendMessage(string.Join(" ", chain.Chain(new Random())));
-                } catch (ArgumentException)
+                    chain.Add(messageFromServer.Split(' '));
+                }
+
+                if (rawMessage.Split(' ').Length > 1)
+                {
+                    try
+                    {
+                        int value;
+                        List<string> words = new List<string>();
+                        words.Add(rawMessage.Split(' ').Skip(1).First());
+
+                        e.Channel.SendMessage(rawMessage.Split(' ').Skip(1).First() + " " + string.Join(" ", chain.Chain(words, new Random())));
+                    }
+                    catch (ArgumentException) { }
+                } else
                 {
                     try
                     {
                         e.Channel.SendMessage(string.Join(" ", chain.Chain(new Random())));
                     }
-                    catch (ArgumentException) {}
+                    catch (ArgumentException) { }
                 }
 			} else
 			{
