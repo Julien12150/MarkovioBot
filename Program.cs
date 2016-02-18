@@ -199,13 +199,18 @@ namespace MarkovioBot
                 string finalMessage = String.Empty;
                 if (rawMessage.ToUpper().StartsWith("PROB") || rawMessage.ToUpper().StartsWith("FULLPROB"))
                 {
-
                     List<string> commandArgs = Regex.Replace(rawMessage, @" + ", " ").Split(' ', '\n', '\r').Skip(1).ToList();
 
-                    List<ulong> mutualServers = servers.Select(t => client.GetServer(t.Item1)).ToList().Where(x => x.GetUser(e.User.Id) != null).Select(x => x.Id).ToList();
+                    //List<ulong> mutualServers = servers.Select(t => client.GetServer(t.Item1)).ToList().Where(x => x.GetUser(e.User.Id) != null).Select(x => x.Id).ToList();
+                    List<ulong> mutualServers = serversInList;
 
                     foreach (var server in servers)
                     {
+                        if (client.GetServer(server.Item1).GetUser(e.User.Id) == null)
+                        {
+                            continue;
+                        }
+
                         MarkovChain<string> chain = new MarkovChain<string>(1);
                         Server currentServer = client.GetServer(server.Item1);
 
@@ -293,7 +298,24 @@ namespace MarkovioBot
                     finalMessage += "Unrecognized command.";
                 }
 
-                e.Channel.SendMessage(finalMessage);
+                try
+                {
+                    e.Channel.SendMessage(finalMessage);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    e.Channel.SendMessage("The data is too long. Sending file...");
+
+                    MemoryStream stream = new MemoryStream();
+                    StreamWriter writer = new StreamWriter(stream);
+                    writer.Write(finalMessage.Replace("\n", Environment.NewLine));
+                    writer.Flush();
+                    stream.Position = 0;
+                    e.Channel.SendFile("data.txt", stream);
+                    writer.Close();
+                    stream.Close();
+                }
+                
             }
             else if (rawMessage.StartsWith("<@" + client.CurrentUser.Id + ">"))
             {
