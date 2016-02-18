@@ -16,21 +16,28 @@ namespace MarkovioBot
 		public static string email;
 		public static string password;
 
-        public static ulong lastServer;
 		public static List<Tuple<ulong, List<string>>> servers;
 
         public static bool shouldExit;
 
+        public static bool isLogging;
 
         public static void Main(string[] args)
 		{
-			Console.Write("Email: ");
+            Console.Title = "MarkovioBot - Disconnected";
+
+            Console.Write("Email: ");
 			email = Console.ReadLine();
+
 			Console.Write("Password: ");
+            Console.ForegroundColor = ConsoleColor.Black;
 			password = Console.ReadLine();
+            Console.ForegroundColor = ConsoleColor.Gray;
+
             Console.WriteLine();
             Console.Clear();
 
+            isLogging = false;
 
             client.MessageReceived += OnMessageReceived;
             client.LoggedIn += OnLoggedIn;
@@ -50,26 +57,37 @@ namespace MarkovioBot
 
 			while (!shouldExit)
             {
-                Console.Write(">");
-
-                string command = Console.ReadLine().Trim();
-
-                if (command.ToUpper().StartsWith("QUIT"))
+                if (client.State == ConnectionState.Connected)
                 {
-                    shouldExit = true;
-                } else if (command.ToUpper().StartsWith("PROB") || command.ToUpper().StartsWith("FULLPROB"))
-                {
-                    List<string> commandArgs = Regex.Replace(command, @" + ", " ").Split(' ','\n','\r').Skip(1).ToList();
+                    Console.Write(">");
 
-                    if (!commandArgs.Any())
+                    string command = Console.ReadLine().Trim();
+
+                    if (command.ToUpper().StartsWith("QUIT"))
                     {
-                        Console.WriteLine("Not enough arguments.");
+                        shouldExit = true;
                     }
-                    else
+                    /*
+                    else if (command.ToUpper().StartsWith("LOG"))
                     {
+                        isLogging = !isLogging;
+                        Console.WriteLine(string.Format("Logging is now {0:enabled;0;disabled}.", Convert.ToInt32(isLogging)));
+                    }
+                    */
+                    else if (command.ToUpper().StartsWith("GAME"))
+                    {
+                        string game = String.Join(" ", Regex.Replace(command, @" + ", " ").Split(' ', '\n', '\r').Skip(1));
+                        client.SetGame(game);
+                        Console.WriteLine("Game set to ``" + game + "``.");
+                    }
+                    else if (command.ToUpper().StartsWith("PROB") || command.ToUpper().StartsWith("FULLPROB"))
+                    {
+                        List<string> commandArgs = Regex.Replace(command, @" + ", " ").Split(' ', '\n', '\r').Skip(1).ToList();
+
                         List<ulong> serversInList = servers.Select(t => t.Item1).ToList();
-                        MarkovChain<string> chain = new MarkovChain<string>(1);
-                        foreach (var server in servers) {
+                        foreach (var server in servers)
+                        {
+                            MarkovChain<string> chain = new MarkovChain<string>(1);
                             Server currentServer = client.GetServer(server.Item1);
 
                             foreach (var messageFromServer in servers[serversInList.IndexOf(server.Item1)].Item2)
@@ -79,13 +97,34 @@ namespace MarkovioBot
 
                             List<string> words = new List<string>();
 
-                            words.Add(commandArgs.First());
+                            if (commandArgs.Any())
+                            {
+                                words.Add(commandArgs.First());
+                            }
 
                             try
                             {
-                                float totalWeight = chain.GetNextStates(words).Sum(x => x.Value);
+                                float totalWeight;
+                                Dictionary<string, int> intChain;
 
-                                Dictionary<string, int> intChain = chain.GetNextStates(words);
+                                if (commandArgs.Any())
+                                {
+                                    totalWeight = chain.GetNextStates(words).Sum(x => x.Value);
+                                }
+                                else
+                                {
+                                    totalWeight = chain.GetInitialStates().Sum(x => x.Value);
+                                }
+
+                                if (commandArgs.Any())
+                                {
+                                    intChain = chain.GetNextStates(words);
+                                }
+                                else
+                                {
+                                    intChain = chain.GetInitialStates();
+                                }
+
                                 Dictionary<string, float> finalChain = new Dictionary<string, float>();
 
                                 foreach (var word in intChain.ToArray())
@@ -93,7 +132,17 @@ namespace MarkovioBot
                                     finalChain.Add(word.Key, word.Value / totalWeight);
                                 }
 
-                                Console.WriteLine(totalWeight + " total entries in " + currentServer.Name + " for ``" + commandArgs.First() + "``");
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+
+                                if (commandArgs.Any())
+                                {
+                                    Console.WriteLine("**" + totalWeight + " total entries in " + currentServer.Name + " for ``" + commandArgs.First() + "``.**");
+                                }
+                                else
+                                {
+                                    Console.WriteLine("**" + totalWeight + " total entries in " + currentServer.Name + " for the first word.** ``");
+                                }
+                                Console.ForegroundColor = ConsoleColor.Gray;
 
                                 if (command.ToUpper().StartsWith("PROB"))
                                 {
@@ -105,7 +154,7 @@ namespace MarkovioBot
                                             Console.WriteLine("...and " + count + " more.");
                                             break;
                                         }
-                                        Console.WriteLine(Math.Round((prob.Value * 100), 3) + "%: " + prob.Key);
+                                        Console.WriteLine("-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", "\\`") + "``");
                                         count--;
                                     }
                                 }
@@ -113,41 +162,155 @@ namespace MarkovioBot
                                 {
                                     foreach (var prob in finalChain.OrderBy(key => key.Value).Reverse())
                                     {
-                                        Console.WriteLine(Math.Round((prob.Value * 100), 3) + "%: " + prob.Key);
+                                        Console.WriteLine("-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", "\\`") + "``");
                                     }
                                 }
                             }
                             catch (Exception)
                             {
+                                Console.ForegroundColor = ConsoleColor.DarkGray;
                                 Console.WriteLine("No data from " + currentServer.Name);
-                                Console.WriteLine();
+                                Console.ForegroundColor = ConsoleColor.Gray;
                             }
                         }
                     }
-                } else
-                {
-                    Console.WriteLine("Unrecognized.");
-                }
+                    else
+                    {
+                        Console.WriteLine("Unrecognized command.");
+                    }
 
-                Console.WriteLine();
+                    Console.WriteLine();
+                }
             }
 		}
 
 		private static void OnMessageReceived(object sender, MessageEventArgs e)
 		{
-            lastServer = e.Server.Id;
-
             List<ulong> serversInList = servers.Select(t => t.Item1).ToList();
 
             string rawMessage = Regex.Replace(e.Message.RawText, @" + ", " ");
             string formattedMessage = Regex.Replace(e.Message.Text, @" + ", " ");
 
-            if (e.Channel.IsPrivate || e.User.Id == client.CurrentUser.Id)
+            if (e.User.Id == client.CurrentUser.Id)
             {
                 return;
+            } else if (e.Channel.IsPrivate)
+            {
+                string finalMessage = String.Empty;
+                if (rawMessage.ToUpper().StartsWith("PROB") || rawMessage.ToUpper().StartsWith("FULLPROB"))
+                {
+
+                    List<string> commandArgs = Regex.Replace(rawMessage, @" + ", " ").Split(' ', '\n', '\r').Skip(1).ToList();
+
+                    List<ulong> mutualServers = servers.Select(t => client.GetServer(t.Item1)).ToList().Where(x => x.GetUser(e.User.Id) != null).Select(x => x.Id).ToList();
+
+                    foreach (var server in servers)
+                    {
+                        MarkovChain<string> chain = new MarkovChain<string>(1);
+                        Server currentServer = client.GetServer(server.Item1);
+
+                        foreach (var messageFromServer in servers[mutualServers.IndexOf(server.Item1)].Item2)
+                        {
+                            chain.Add(messageFromServer.Split(' ', '\n', '\r'));
+                        }
+
+                        List<string> words = new List<string>();
+
+                        if (commandArgs.Any())
+                        {
+                            words.Add(commandArgs.First());
+                        }
+
+                        try
+                        {
+                            float totalWeight;
+                            Dictionary<string, int> intChain;
+
+                            if (commandArgs.Any())
+                            {
+                                totalWeight = chain.GetNextStates(words).Sum(x => x.Value);
+                            }
+                            else
+                            {
+                                totalWeight = chain.GetInitialStates().Sum(x => x.Value);
+                            }
+
+                            if (commandArgs.Any())
+                            {
+                                intChain = chain.GetNextStates(words);
+                            }
+                            else
+                            {
+                                intChain = chain.GetInitialStates();
+                            }
+
+                            Dictionary<string, float> finalChain = new Dictionary<string, float>();
+
+                            foreach (var word in intChain.ToArray())
+                            {
+                                finalChain.Add(word.Key, word.Value / totalWeight);
+                            }
+
+                            if (commandArgs.Any())
+                            {
+                                finalMessage += "**" + totalWeight + " total entries in " + currentServer.Name + " for ``" + commandArgs.First() + "``.**\n";
+                            }
+                            else
+                            {
+                                finalMessage += "**" + totalWeight + " total entries in " + currentServer.Name + " for the first word.**\n";
+                            }
+
+                            if (rawMessage.ToUpper().StartsWith("PROB"))
+                            {
+                                int count = finalChain.Count;
+                                foreach (var prob in finalChain.OrderBy(key => key.Value).Reverse())
+                                {
+                                    if (prob.Value <= 0.05 && finalChain.Count - count >= 10)
+                                    {
+                                        finalMessage += "...and " + count + " more.\n";
+                                        break;
+                                    }
+                                    finalMessage += "-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", "\\`") + "``\n";
+                                    count--;
+                                }
+                            }
+                            else
+                            {
+                                foreach (var prob in finalChain.OrderBy(key => key.Value).Reverse())
+                                {
+                                    finalMessage += "-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", "\\`") + "``\n";
+                                }
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            finalMessage += "No data from " + currentServer.Name + "\n";
+                        }
+                    }
+                }
+                else
+                {
+                    finalMessage += "Unrecognized command.";
+                }
+
+                e.Channel.SendMessage(finalMessage);
             }
             else if (rawMessage.StartsWith("<@" + client.CurrentUser.Id + ">"))
             {
+                if (isLogging)
+                {
+                    Console.WriteLine(String.Format("User {0} <{1}> in {2} <{3}> on {4} said:",
+                        e.User.Name,
+                        e.User.Id,
+                        e.Server.Name,
+                        e.Server.Id,
+                        e.Message.Timestamp.ToString("F")));
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine(e.Message.RawText);
+                    Console.ForegroundColor = ConsoleColor.Gray;
+                    Console.WriteLine();
+                }
+
                 MarkovChain<string> chain = new MarkovChain<string>(1);
                 foreach (var messageFromServer in servers[serversInList.IndexOf(e.Server.Id)].Item2)
                 {
@@ -164,7 +327,6 @@ namespace MarkovioBot
                         string chained = rawMessage.Split(' ', '\n', '\r').Skip(1).First() + " " + string.Join(" ", chain.Chain(words, new Random()));
 
                         e.Channel.SendMessage(chained);
-                        client.SetGame(chained);
                     }
                     catch (ArgumentException) { }
                 } else
@@ -174,7 +336,6 @@ namespace MarkovioBot
                         string chained = string.Join(" ", chain.Chain(new Random()));
 
                         e.Channel.SendMessage(chained);
-                        client.SetGame(chained);
                     }
                     catch (ArgumentException) { }
                 }
