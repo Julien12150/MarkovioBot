@@ -363,16 +363,13 @@ namespace MarkovioBot
                 }
             } else
             {
-                if (!rawMessage.Contains("``")) {
-                    if (serversInList.Contains(e.Server.Id))
+                if (!rawMessage.Contains("``") || rawMessage.Trim() != String.Empty) {
+                    if (!serversInList.Contains(e.Server.Id))
                     {
-                        servers[serversInList.IndexOf(e.Server.Id)].Item2.Add(e.Message.Text);
-                    } else
-                    {
-                        servers.Add(new Tuple<ulong, List<string>>(e.Server.Id, new List<string>()));
-                        servers[0].Item2.Add(e.Message.Text);
-                    }
-                }
+						servers.Add(new Tuple<ulong, List<string>>(e.Server.Id, new List<string>()));
+					}
+					servers[serversInList.IndexOf(e.Server.Id)].Item2.Add(e.Message.Text);
+				}
 			}
 
 			File.WriteAllText(
