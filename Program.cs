@@ -2,8 +2,11 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Speech.AudioFormat;
+using System.Speech.Synthesis;
 using System.Text.RegularExpressions;
 using Discord;
+using Discord.Audio;
 using Markov;
 using Newtonsoft.Json;
 
@@ -13,10 +16,14 @@ namespace MarkovioBot
 	{
 		public static DiscordClient client = new DiscordClient();
 
-		public static string email;
+        public static string appData;
+
+        public static string email;
 		public static string password;
 
 		public static List<Tuple<ulong, List<string>>> servers;
+
+        public static SpeechSynthesizer synth;
 
         public static bool shouldExit;
 
@@ -44,8 +51,10 @@ namespace MarkovioBot
             client.GatewaySocket.Connected += OnConnected;
             client.GatewaySocket.Disconnected += OnDisconnected;
 
+            appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\MarkovioBot\";
+
             servers = JsonConvert.DeserializeObject<List<Tuple<ulong, List<string>>>>(
-				File.ReadAllText(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\MarkovioBot\serverData.json")
+				File.ReadAllText(appData + "serverData.json")
 			);
 
 			if (servers == null)
@@ -53,7 +62,44 @@ namespace MarkovioBot
 				servers = new List<Tuple<ulong, List<string>>>();
 			}
 
-			client.Connect(email, password);
+            synth = new SpeechSynthesizer();
+            synth.Rate = -1;
+
+            try
+            {
+                synth.SelectVoice("Microsoft Haruka Desktop");
+            }
+            catch (Exception) { }
+            
+
+            /*
+            foreach (var voice in synth.GetInstalledVoices())
+            {
+                Console.WriteLine(voice.VoiceInfo.Name);
+                Console.WriteLine(voice.VoiceInfo.Gender.ToString());
+                Console.WriteLine(voice.VoiceInfo.Description);
+                Console.WriteLine(voice.VoiceInfo.Age.ToString());
+                foreach (var info in voice.VoiceInfo.AdditionalInfo)
+                {
+                    Console.WriteLine(info.Key + ": " + info.Value);
+                }
+                Console.WriteLine();
+
+                try {
+                    synth.SelectVoice(voice.VoiceInfo.Name);
+                    synth.Speak(voice.VoiceInfo.Name);
+                } catch { }
+            }
+            */
+
+            client.UsingAudio(x =>
+            {
+                x.Mode = AudioMode.Outgoing;
+                x.Bitrate = 64;
+                x.BufferLength = 10000;
+            });
+
+            client.Connect(email, password);
 
 			while (!shouldExit)
             {
@@ -194,14 +240,14 @@ namespace MarkovioBot
             if (e.User.Id == client.CurrentUser.Id)
             {
                 return;
-            } else if (e.Channel.IsPrivate)
+            }
+            else if (e.Channel.IsPrivate)
             {
                 string finalMessage = String.Empty;
                 if (rawMessage.ToUpper().StartsWith("PROB") || rawMessage.ToUpper().StartsWith("FULLPROB"))
                 {
                     List<string> commandArgs = Regex.Replace(rawMessage, @" + ", " ").Split(' ', '\n', '\r').Skip(1).ToList();
 
-                    //List<ulong> mutualServers = servers.Select(t => client.GetServer(t.Item1)).ToList().Where(x => x.GetUser(e.User.Id) != null).Select(x => x.Id).ToList();
                     List<ulong> mutualServers = serversInList;
 
                     foreach (var server in servers)
@@ -275,7 +321,7 @@ namespace MarkovioBot
                                         finalMessage += "...and " + count + " more.\n";
                                         break;
                                     }
-                                    finalMessage += "-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", "\\`") + "``\n";
+                                    finalMessage += "-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", @"\`") + "``\n";
                                     count--;
                                 }
                             }
@@ -283,7 +329,7 @@ namespace MarkovioBot
                             {
                                 foreach (var prob in finalChain.OrderBy(key => key.Value).Reverse())
                                 {
-                                    finalMessage += "-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", "\\`") + "``\n";
+                                    finalMessage += "-" + Math.Round((prob.Value * 100), 3) + "%: ``" + prob.Key.Replace("`", @"\`") + "``\n";
                                 }
                             }
                         }
@@ -302,9 +348,10 @@ namespace MarkovioBot
                 {
                     e.Channel.SendMessage(finalMessage);
                 }
+
                 catch (ArgumentOutOfRangeException)
                 {
-                    e.Channel.SendMessage("The data is too long. Sending file...");
+                    e.Channel.SendMessage("The data is too long. Sending a file instead...");
 
                     MemoryStream stream = new MemoryStream();
                     StreamWriter writer = new StreamWriter(stream);
@@ -348,7 +395,7 @@ namespace MarkovioBot
 
                         string chained = rawMessage.Split(' ', '\n', '\r').Skip(1).First() + " " + string.Join(" ", chain.Chain(words, new Random()));
 
-                        e.Channel.SendMessage(chained);
+                        SendMessage(chained, e);
                     }
                     catch (ArgumentException) { }
                 } else
@@ -357,23 +404,25 @@ namespace MarkovioBot
                     {
                         string chained = string.Join(" ", chain.Chain(new Random()));
 
-                        e.Channel.SendMessage(chained);
+                        SendMessage(chained, e);
                     }
                     catch (ArgumentException) { }
                 }
             } else
             {
-                if (!rawMessage.Contains("``") || rawMessage.Trim() != String.Empty) {
-                    if (!serversInList.Contains(e.Server.Id))
-                    {
+                if (!rawMessage.Contains("``") ||
+					!rawMessage.StartsWith("<@") ||
+					formattedMessage.Trim() != String.Empty) {
+					if (!serversInList.Contains(e.Server.Id))
+					{
 						servers.Add(new Tuple<ulong, List<string>>(e.Server.Id, new List<string>()));
 					}
 					servers[serversInList.IndexOf(e.Server.Id)].Item2.Add(e.Message.Text);
-				}
+                }
 			}
 
 			File.WriteAllText(
-				Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\MarkovioBot\serverData.json",
+				appData + "serverData.json",
 				JsonConvert.SerializeObject(servers)
 			);
         }
@@ -393,6 +442,28 @@ namespace MarkovioBot
         private static void OnDisconnected(object sender, EventArgs e)
         {
             Console.Title = "MarkovioBot - Disconnected";
+        }
+
+        private static async void SendMessage(string message, MessageEventArgs e)
+        {
+            await e.Channel.SendMessage(message);
+
+            if (e.User.VoiceChannel != null)
+            {
+                IAudioClient audioClient = await e.User.VoiceChannel.JoinAudio();
+
+                MemoryStream memoryStream = new MemoryStream();
+
+                SpeechAudioFormatInfo formatInfo = new SpeechAudioFormatInfo(48000, AudioBitsPerSample.Sixteen, AudioChannel.Stereo);
+
+                synth.SetOutputToAudioStream(memoryStream, formatInfo);
+
+                synth.Speak(message);
+
+                memoryStream.Position = 0;
+
+                memoryStream.CopyTo(audioClient.OutputStream);
+            }
         }
     }
 }
