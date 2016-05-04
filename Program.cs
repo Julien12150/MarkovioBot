@@ -35,9 +35,15 @@ namespace MarkovioBot {
 		public static void Main(string[] args) {
 			Console.Title = "MarkovioBot";
 
-			appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\PoyoBots\MarkovioBot\";
-			if (!Directory.Exists(appData)) {
-				Directory.CreateDirectory(appData);
+			appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\PoyoBots\MarkovioBot";
+			if (!Directory.Exists(appData + @"\Server Data")) {
+				Directory.CreateDirectory(appData + @"\Server Data");
+			}
+			if (!Directory.Exists(appData + @"\User Data")) {
+				Directory.CreateDirectory(appData + @"\User Data");
+			}
+			if (!Directory.Exists(appData + @"\Backups")) {
+				Directory.CreateDirectory(appData + @"\Backups");
 			}
 
 			for (int i = 0; i < args.Length; i++) {
@@ -60,13 +66,20 @@ namespace MarkovioBot {
 			};
 			client.GatewaySocket.Connected += (s, e) => Log("Connected.");
 			client.GatewaySocket.Disconnected += (s, e) => Log("Disconnected.", MessageType.Warning);
-			
-			servers = new List<DiscordServer>();
 
-			foreach (String file in Directory.GetFiles(appData)) {
+			servers = new List<DiscordServer>();
+			users = new List<DiscordUser>();
+
+			foreach (String file in Directory.GetFiles(appData + @"\Server Data")) {
 				string fileText = File.ReadAllText(file);
 				DiscordServer deserializedServer = JsonConvert.DeserializeObject<DiscordServer>(fileText);
 				servers.Add(deserializedServer);
+			}
+
+			foreach (String file in Directory.GetFiles(appData + @"\User Data")) {
+				string fileText = File.ReadAllText(file);
+				DiscordUser deserializedUser = JsonConvert.DeserializeObject<DiscordUser>(fileText);
+				users.Add(deserializedUser);
 			}
 
 			synth = new SpeechSynthesizer();
@@ -74,6 +87,7 @@ namespace MarkovioBot {
 			try {
 				synth.SelectVoice("Microsoft Haruka Desktop");
 			} catch (Exception) { }
+
 			client.UsingAudio(x => {
 				x.Mode = AudioMode.Outgoing;
 				x.Bitrate = 64;
@@ -82,7 +96,45 @@ namespace MarkovioBot {
 
 			client.Connect(token);
 
-			while (!shouldExit) { }
+			while (!shouldExit) {
+				DateTime time = DateTime.Now;
+				bool hasCompleted = false;
+				
+                try {
+					hasCompleted = new DirectoryInfo(appData + @"\Backups\")
+						.GetDirectories()
+						.OrderByDescending(x => x.CreationTime)
+						.First()
+						.CreationTime > DateTime.Now.AddDays(-1);
+				} catch (InvalidOperationException) {}
+
+				if (((time.DayOfWeek == DayOfWeek.Tuesday) ||
+					(time.DayOfWeek == DayOfWeek.Saturday)) &&
+					!hasCompleted) {
+					Log("Backing up files...");
+
+					string backupDirectory = appData + @"\Backups\" + time.ToString("dd-MM-yyyy");
+					Directory.CreateDirectory(backupDirectory);
+					Directory.CreateDirectory(backupDirectory + @"\Server Data");
+					Directory.CreateDirectory(backupDirectory + @"\User Data");
+
+					foreach (String file in Directory.GetFiles(appData + @"\Server Data")) {
+						File.Copy(
+							file,
+							backupDirectory + @"\Server Data\" + Path.GetFileName(file)
+						);
+					}
+
+					foreach (String file in Directory.GetFiles(appData + @"\User Data")) {
+						File.Copy(
+							file,
+							backupDirectory + @"\User Data\" + Path.GetFileName(file)
+						);
+
+					}
+					Log("Done.");
+				}
+			}
 		}
 
 		private static void OnMessageReceived(object sender, MessageEventArgs e) {
@@ -90,11 +142,39 @@ namespace MarkovioBot {
 				return;
 			}
 
+			if (!users.Any(x => x.Id == e.User.Id)) {
+				users.Add(new DiscordUser {
+					Id = e.User.Id,
+					LikesSpeech = true
+				});
+			}
+
 			if (e.Channel.IsPrivate) {
-				e.Channel.SendMessage("I'm MarkovioBot. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:");
+				DiscordUser userItem = users.First(x => x.Id == e.User.Id);
+				if (e.Message.Text.ToUpper().Contains("SHUT UP")) {
+					if (userItem.LikesSpeech) {
+						userItem.LikesSpeech = false;
+						SendMessage(@"\*angrily becomes silent\*", e);
+					} else {
+						SendMessage(@"\*continues saying nothing angrily\*", e);
+					}
+				} else if (e.Message.Text.ToUpper().Contains("TALK TO ME")) {
+					if (!userItem.LikesSpeech) {
+						userItem.LikesSpeech = true;
+						SendMessage(@"Freeeeeeedom!", e);
+					} else {
+						SendMessage(@"Ok.", e);
+					}
+				} else {
+					SendMessage(
+						"I'm MarkovioBot. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:\n" +
+						"If you'd like me to stop talking to you every single time you summon me, tell me to `shut up`.\n" +
+						"If you want me to start talking again, say `talk to me`.",
+					e);
+				}
 				return;
 			} else {
-				if (!servers.Where(x => x.Id == e.Server.Id).Any()) {
+				if (!servers.Any(x => x.Id == e.Server.Id)) {
 					servers.Add(new DiscordServer {
 						Id = e.Server.Id,
 						Inputs = new List<string>()
@@ -103,7 +183,7 @@ namespace MarkovioBot {
 			}
 
 			if (!e.Message.Channel.Topic.ToUpper().Contains("[MARKOVIONOREAD]")) {
-				servers.Where(x => x.Id == e.Server.Id).First()
+				servers.First(x => x.Id == e.Server.Id)
 					.Inputs
 					.Add(e.Message.Text);
 			}
@@ -112,7 +192,7 @@ namespace MarkovioBot {
 				if (!e.Message.Channel.Topic.ToUpper().Contains("[MARKOVIONOSPEAK]")) {
 					MarkovChain<string> chain = new MarkovChain<string>(1);
 
-					foreach (string input in servers.Where(x => x.Id == e.Server.Id).First().Inputs) {
+					foreach (string input in servers.First(x => x.Id == e.Server.Id).Inputs) {
 						chain.Add(
 							Regex.Replace(input, @"\s+", " ").Split(' ')
 						);
@@ -124,16 +204,29 @@ namespace MarkovioBot {
 
 			foreach (DiscordServer server in servers) {
 				File.WriteAllText(
-					appData + "/" + server.Id + ".json",
+					appData + @"\Server Data\" + server.Id + ".json",
 					JsonConvert.SerializeObject(server)
+				);
+			}
+
+			foreach (DiscordUser user in users) {
+				File.WriteAllText(
+					appData + @"\User Data\" + user.Id + ".json",
+					JsonConvert.SerializeObject(user)
 				);
 			}
 		}
 
 		private static async void SendMessage(string message, MessageEventArgs e) {
-			await e.Channel.SendMessage(message);
-
 			try {
+				await e.Channel.SendMessage(message);
+			} catch (ArgumentException) {
+				Log("Empty message...?", MessageType.Error);
+			}
+
+			if ((e.User.VoiceChannel != null) &&
+				(!e.Channel.IsPrivate) &&
+				(users.First(x => x.Id == e.User.Id).LikesSpeech)) {
 				IAudioClient audioClient = await e.User.VoiceChannel.JoinAudio();
 
 				MemoryStream memoryStream = new MemoryStream();
@@ -146,9 +239,6 @@ namespace MarkovioBot {
 				memoryStream.Position = 0;
 				memoryStream.CopyTo(audioClient.OutputStream);
 				memoryStream.Dispose();
-
-			} catch (Exception error) {
-				Log(error.Message, MessageType.Error);
 			}
 		}
 
