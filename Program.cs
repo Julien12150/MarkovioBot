@@ -9,7 +9,6 @@ using Discord;
 using Discord.Audio;
 using Markov;
 using Newtonsoft.Json;
-using Discord.API.Client.Rest;
 
 namespace MarkovioBot {
 	enum MessageType {
@@ -29,6 +28,10 @@ namespace MarkovioBot {
 		public static List<DiscordUser> users;
 
 		public static SpeechSynthesizer synth;
+
+		public static DateTime lastGameTime = DateTime.MinValue;
+		public static SteamAppList apps;
+		public static MarkovChain<string> gameChain = new MarkovChain<string>(1);
 
 		public static bool shouldExit;
 
@@ -82,6 +85,18 @@ namespace MarkovioBot {
 				users.Add(deserializedUser);
 			}
 
+			using (var webClient = new System.Net.WebClient()) {
+				apps = JsonConvert.DeserializeObject<SteamAppList>(
+					webClient.DownloadString("http://api.steampowered.com/ISteamApps/GetAppList/v0001/")
+				);
+
+				foreach (string app in apps.AppList.Apps.App.Select(x => x.Name)) {
+					gameChain.Add(
+						Regex.Replace(app, @"\s+", " ").Split(' ')
+					);
+				}
+			}
+
 			synth = new SpeechSynthesizer();
 			synth.Rate = 1;
 			try {
@@ -98,19 +113,26 @@ namespace MarkovioBot {
 
 			while (!shouldExit) {
 				DateTime time = DateTime.Now;
-				bool hasCompleted = false;
-				
-                try {
-					hasCompleted = new DirectoryInfo(appData + @"\Backups\")
+
+				bool hasBackedUp = false;
+
+				if (lastGameTime < DateTime.Now.AddMinutes(-20)) {
+					try {
+						string game = String.Join(" ", gameChain.Chain());
+						client.SetGame(game);
+						lastGameTime = DateTime.Now;
+					} catch (NullReferenceException) {}
+                }
+
+				try {
+					hasBackedUp = new DirectoryInfo(appData + @"\Backups\")
 						.GetDirectories()
 						.OrderByDescending(x => x.CreationTime)
 						.First()
-						.CreationTime > DateTime.Now.AddDays(-1);
-				} catch (InvalidOperationException) {}
+						.CreationTime > time.AddDays(-2);
+				} catch (InvalidOperationException) { }
 
-				if (((time.DayOfWeek == DayOfWeek.Tuesday) ||
-					(time.DayOfWeek == DayOfWeek.Saturday)) &&
-					!hasCompleted) {
+				if (!hasBackedUp) {
 					Log("Backing up files...");
 
 					string backupDirectory = appData + @"\Backups\" + time.ToString("dd-MM-yyyy");
@@ -151,13 +173,16 @@ namespace MarkovioBot {
 
 			if (e.Channel.IsPrivate) {
 				DiscordUser userItem = users.First(x => x.Id == e.User.Id);
-				if (e.Message.Text.ToUpper().Contains("SHUT UP")) {
-					if (userItem.LikesSpeech) {
-						userItem.LikesSpeech = false;
-						SendMessage(@"\*angrily becomes silent\*", e);
+				if (e.Message.Text.ToUpper().Contains("PLAY ANOTHER GAME")) {
+					if (lastGameTime > DateTime.Now.AddMinutes(-2)) {
+						SendMessage(@"...I just started this one.", e);
 					} else {
-						SendMessage(@"\*continues saying nothing angrily\*", e);
-					}
+						string game = String.Join(" ", gameChain.Chain());
+						client.SetGame(game);
+
+						SendMessage("Okay, I'm gonna try \"" + game + ".\"", e);
+						lastGameTime = DateTime.Now;
+                    }
 				} else if (e.Message.Text.ToUpper().Contains("TALK TO ME")) {
 					if (!userItem.LikesSpeech) {
 						userItem.LikesSpeech = true;
@@ -165,11 +190,19 @@ namespace MarkovioBot {
 					} else {
 						SendMessage(@"Ok.", e);
 					}
+				} else if (e.Message.Text.ToUpper().Contains("SHUT UP")) {
+					if (userItem.LikesSpeech) {
+						userItem.LikesSpeech = false;
+						SendMessage(@"\*angrily says nothing\*", e);
+					} else {
+						SendMessage(@"\*continues saying nothing angrily\*", e);
+					}
 				} else {
 					SendMessage(
 						"I'm MarkovioBot. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:\n" +
 						"If you'd like me to stop talking to you every single time you summon me, tell me to `shut up`.\n" +
-						"If you want me to start talking again, say `talk to me`.",
+						"If you want me to start talking again, say `talk to me`.\n" +
+						"If you think I should, you can tell me to `play another game`.",
 					e);
 				}
 				return;
@@ -185,7 +218,9 @@ namespace MarkovioBot {
 			if (!e.Message.Channel.Topic.ToUpper().Contains("[MARKOVIONOREAD]")) {
 				servers.First(x => x.Id == e.Server.Id)
 					.Inputs
-					.Add(e.Message.Text);
+					.Add(e.Message.Text.Trim(
+						("<@" + client.CurrentUser.Id + ">").ToCharArray()
+					));
 			}
 
 			if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">")) {
@@ -219,9 +254,10 @@ namespace MarkovioBot {
 
 		private static async void SendMessage(string message, MessageEventArgs e) {
 			try {
-				await e.Channel.SendMessage(message);
+				e.Channel.SendMessage(message);
 			} catch (ArgumentException) {
 				Log("Empty message...?", MessageType.Error);
+				e.Channel.SendIsTyping();
 			}
 
 			if ((e.User.VoiceChannel != null) &&
