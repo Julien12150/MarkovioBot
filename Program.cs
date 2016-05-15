@@ -10,6 +10,8 @@ using Discord.Audio;
 using Markov;
 using Newtonsoft.Json;
 
+//Version 2.1.5
+
 namespace MarkovioBot {
 	enum MessageType {
 		Info,
@@ -125,6 +127,8 @@ namespace MarkovioBot {
                 }
 
 				try {
+
+
 					hasBackedUp = new DirectoryInfo(appData + @"\Backups\")
 						.GetDirectories()
 						.OrderByDescending(x => x.CreationTime)
@@ -202,7 +206,13 @@ namespace MarkovioBot {
 						"I'm MarkovioBot. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:\n" +
 						"If you'd like me to stop talking to you every single time you summon me, tell me to `shut up`.\n" +
 						"If you want me to start talking again, say `talk to me`.\n" +
-						"If you think I should, you can tell me to `play another game`.",
+						"If you think I should, you can tell me to `play another game`.\n" +
+						"\n" +
+						"Do you want me in your server? Just click this link:\n" +
+						"https://discordapp.com/oauth2/authorize?client_id=170089741130268672&scope=bot&permissions=36801536\n" +
+						"Put `[MKS]` in a channel topic to allow me to speak, and `[MKR]` to allow me to read.\n" +
+						"`[MKRS]` is a shorthand for both of these.\n" +
+						"These are case-insensitive.",
 					e);
 				}
 				return;
@@ -215,16 +225,23 @@ namespace MarkovioBot {
 				}
 			}
 
-			if (!e.Message.Channel.Topic.ToUpper().Contains("[MARKOVIONOREAD]")) {
-				servers.First(x => x.Id == e.Server.Id)
-					.Inputs
-					.Add(e.Message.Text.Trim(
-						("<@" + client.CurrentUser.Id + ">").ToCharArray()
-					));
+			if (e.Message.Channel.Topic.ToUpper().Contains("[MKR]") ||
+                e.Message.Channel.Topic.ToUpper().Contains("[MKRS]")) {
+				if (e.Message.Text.StartsWith("@" + client.CurrentUser.Name) &&
+					e.Message.Text.Remove(0, ("@" + client.CurrentUser.Name).Count()).Trim().Any()) {
+					servers.First(x => x.Id == e.Server.Id)
+						.Inputs
+						.Add(e.Message.Text.Remove(0, ("@" + client.CurrentUser.Name).Count()).Trim());
+				} else {
+					servers.First(x => x.Id == e.Server.Id)
+						.Inputs
+						.Add(e.Message.Text.Trim());
+				}
 			}
 
 			if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">")) {
-				if (!e.Message.Channel.Topic.ToUpper().Contains("[MARKOVIONOSPEAK]")) {
+				if (e.Message.Channel.Topic.ToUpper().Contains("[MKS]") ||
+					e.Message.Channel.Topic.ToUpper().Contains("[MKRS]")) {
 					MarkovChain<string> chain = new MarkovChain<string>(1);
 
 					foreach (string input in servers.First(x => x.Id == e.Server.Id).Inputs) {
