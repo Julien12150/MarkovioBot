@@ -297,6 +297,8 @@ namespace MarkovioBot {
 				}
 			} catch (TimeoutException) {
 				Log("Timeout.", MessageType.Error);
+			} catch (OperationCanceledException) {
+				Log("Tried to speak while disconnected.", MessageType.Error);
 			}
 		}
 
