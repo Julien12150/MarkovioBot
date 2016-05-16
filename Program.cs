@@ -10,7 +10,7 @@ using Discord.Audio;
 using Markov;
 using Newtonsoft.Json;
 
-//Version 2.1.5
+//Version 2.1.6
 
 namespace MarkovioBot {
 	enum MessageType {
@@ -242,6 +242,8 @@ namespace MarkovioBot {
 			if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">")) {
 				if (e.Message.Channel.Topic.ToUpper().Contains("[MKS]") ||
 					e.Message.Channel.Topic.ToUpper().Contains("[MKRS]")) {
+					e.Channel.SendIsTyping();
+
 					MarkovChain<string> chain = new MarkovChain<string>(1);
 
 					foreach (string input in servers.First(x => x.Id == e.Server.Id).Inputs) {
@@ -273,25 +275,28 @@ namespace MarkovioBot {
 			try {
 				e.Channel.SendMessage(message);
 			} catch (ArgumentException) {
-				Log("Empty message...?", MessageType.Error);
-				e.Channel.SendIsTyping();
+				Log("Empty message.", MessageType.Error);
 			}
 
-			if ((e.User.VoiceChannel != null) &&
-				(!e.Channel.IsPrivate) &&
-				(users.First(x => x.Id == e.User.Id).LikesSpeech)) {
-				IAudioClient audioClient = await e.User.VoiceChannel.JoinAudio();
+			try {
+				if ((e.User.VoiceChannel != null) &&
+					(!e.Channel.IsPrivate) &&
+					(users.First(x => x.Id == e.User.Id).LikesSpeech)) {
+					IAudioClient audioClient = await e.User.VoiceChannel.JoinAudio();
 
-				MemoryStream memoryStream = new MemoryStream();
+					MemoryStream memoryStream = new MemoryStream();
 
-				synth.SetOutputToAudioStream(memoryStream,
-					new SpeechAudioFormatInfo(48000, AudioBitsPerSample.Sixteen, AudioChannel.Stereo));
+					synth.SetOutputToAudioStream(memoryStream,
+						new SpeechAudioFormatInfo(48000, AudioBitsPerSample.Sixteen, AudioChannel.Stereo));
 
-				synth.Speak(message);
+					synth.Speak(message);
 
-				memoryStream.Position = 0;
-				memoryStream.CopyTo(audioClient.OutputStream);
-				memoryStream.Dispose();
+					memoryStream.Position = 0;
+					memoryStream.CopyTo(audioClient.OutputStream);
+					memoryStream.Dispose();
+				}
+			} catch (TimeoutException) {
+				Log("Timeout.", MessageType.Error);
 			}
 		}
 
