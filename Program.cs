@@ -7,16 +7,16 @@ using System.Speech.Synthesis;
 using System.Text.RegularExpressions;
 using Discord;
 using Discord.Audio;
-using Markov;
 using Newtonsoft.Json;
 
-//Version 2.1.6
+//Version 3.3.0
 
 namespace MarkovioBot {
 	enum MessageType {
 		Info,
 		Warning,
-		Error
+		Error,
+		Test
 	}
 
 	class Program {
@@ -31,29 +31,27 @@ namespace MarkovioBot {
 
 		public static SpeechSynthesizer synth;
 
-		public static DateTime lastGameTime = DateTime.MinValue;
-		public static SteamAppList apps;
-		public static MarkovChain<string> gameChain = new MarkovChain<string>(1);
-
 		public static bool shouldExit;
 
-		public static void Main(string[] args) {
+		public static string[] args;
+
+		private static ulong currentUserId;
+		private static ulong currentServerId;
+
+		public static void Main(string[] cmdArgs) {
+			args = cmdArgs;
 			Console.Title = "MarkovioBot";
 
 			appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\PoyoBots\MarkovioBot";
-			if (!Directory.Exists(appData + @"\Server Data")) {
-				Directory.CreateDirectory(appData + @"\Server Data");
-			}
-			if (!Directory.Exists(appData + @"\User Data")) {
-				Directory.CreateDirectory(appData + @"\User Data");
-			}
-			if (!Directory.Exists(appData + @"\Backups")) {
-				Directory.CreateDirectory(appData + @"\Backups");
-			}
 
 			for (int i = 0; i < args.Length; i++) {
 				if (args[i].Equals("-token") && args[i + 1] != null) {
 					token = args[i + 1];
+				}
+
+				if (args[i].Equals("-test") && args[i + 1] != null) {
+					token = args[i + 1];
+					appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + @"\PoyoBots\MarkovioBotTest";
 				}
 			}
 
@@ -65,15 +63,17 @@ namespace MarkovioBot {
 			Console.Clear();
 
 			client.MessageReceived += OnMessageReceived;
-			client.LoggedIn += (s, e) => {
-				Log(String.Format("Logged in as {0}.", client.CurrentUser.Name));
-				Log(String.Format("Current voice is {0}.", synth.Voice.Name));
-			};
-			client.GatewaySocket.Connected += (s, e) => Log("Connected.");
-			client.GatewaySocket.Disconnected += (s, e) => Log("Disconnected.", MessageType.Warning);
+			client.Ready += OnReady;
+			client.GatewaySocket.Connected += OnConnected;
+
+			client.GatewaySocket.Disconnected += OnDisconnected;
+
+			client.JoinedServer += OnJoinedServer;
 
 			servers = new List<DiscordServer>();
 			users = new List<DiscordUser>();
+
+			BackupHandler.Initialize();
 
 			foreach (String file in Directory.GetFiles(appData + @"\Server Data")) {
 				string fileText = File.ReadAllText(file);
@@ -84,91 +84,58 @@ namespace MarkovioBot {
 			foreach (String file in Directory.GetFiles(appData + @"\User Data")) {
 				string fileText = File.ReadAllText(file);
 				DiscordUser deserializedUser = JsonConvert.DeserializeObject<DiscordUser>(fileText);
-				users.Add(deserializedUser);
-			}
-
-			using (var webClient = new System.Net.WebClient()) {
-				apps = JsonConvert.DeserializeObject<SteamAppList>(
-					webClient.DownloadString("http://api.steampowered.com/ISteamApps/GetAppList/v0001/")
-				);
-
-				foreach (string app in apps.AppList.Apps.App.Select(x => x.Name)) {
-					gameChain.Add(
-						Regex.Replace(app, @"\s+", " ").Split(' ')
-					);
+				if (deserializedUser != null) {
+					users.Add(deserializedUser);
+				} else {
+					File.Delete(file);
 				}
 			}
 
 			synth = new SpeechSynthesizer();
 			synth.Rate = 1;
+
 			try {
 				synth.SelectVoice("Microsoft Haruka Desktop");
 			} catch (Exception) { }
 
-			client.UsingAudio(x => {
-				x.Mode = AudioMode.Outgoing;
-				x.Bitrate = 64;
-				x.BufferLength = 10000;
-			});
+			AudioServiceConfigBuilder config = new AudioServiceConfigBuilder();
+
+			config.Mode = AudioMode.Outgoing;
+			config.Bitrate = 64;
+			config.BufferLength = 10000;
+
+			client.UsingAudio(config.Build());
 
 			client.Connect(token);
 
-			while (!shouldExit) {
-				DateTime time = DateTime.Now;
+			CurrentGameHandler.Initialize();
 
+			while (!shouldExit) {
 				bool hasBackedUp = false;
 
-				if (lastGameTime < DateTime.Now.AddMinutes(-20)) {
-					try {
-						string game = String.Join(" ", gameChain.Chain());
-						client.SetGame(game);
-						lastGameTime = DateTime.Now;
-					} catch (NullReferenceException) {}
-                }
-
 				try {
-
-
 					hasBackedUp = new DirectoryInfo(appData + @"\Backups\")
 						.GetDirectories()
-						.OrderByDescending(x => x.CreationTime)
+						.OrderByDescending(SortFiles)
 						.First()
-						.CreationTime > time.AddDays(-2);
+						.CreationTime > DateTime.Now.AddDays(-2);
 				} catch (InvalidOperationException) { }
 
 				if (!hasBackedUp) {
-					Log("Backing up files...");
-
-					string backupDirectory = appData + @"\Backups\" + time.ToString("dd-MM-yyyy");
-					Directory.CreateDirectory(backupDirectory);
-					Directory.CreateDirectory(backupDirectory + @"\Server Data");
-					Directory.CreateDirectory(backupDirectory + @"\User Data");
-
-					foreach (String file in Directory.GetFiles(appData + @"\Server Data")) {
-						File.Copy(
-							file,
-							backupDirectory + @"\Server Data\" + Path.GetFileName(file)
-						);
-					}
-
-					foreach (String file in Directory.GetFiles(appData + @"\User Data")) {
-						File.Copy(
-							file,
-							backupDirectory + @"\User Data\" + Path.GetFileName(file)
-						);
-
-					}
-					Log("Done.");
+					BackupHandler.Backup();
 				}
 			}
 		}
 
 		private static void OnMessageReceived(object sender, MessageEventArgs e) {
-			if (e.User.Id == client.CurrentUser.Id) {
+			currentUserId = e.User.Id;
+			currentServerId = e.Server.Id;
+
+			if (e.User.Id == client.CurrentUser.Id || e.User.IsBot) {
 				return;
 			}
 
-			if (!users.Any(x => x.Id == e.User.Id)) {
+			if (!users.Any(CompareIds)) {
 				users.Add(new DiscordUser {
 					Id = e.User.Id,
 					LikesSpeech = true
@@ -176,83 +143,105 @@ namespace MarkovioBot {
 			}
 
 			if (e.Channel.IsPrivate) {
-				DiscordUser userItem = users.First(x => x.Id == e.User.Id);
-				if (e.Message.Text.ToUpper().Contains("PLAY ANOTHER GAME")) {
-					if (lastGameTime > DateTime.Now.AddMinutes(-2)) {
-						SendMessage(@"...I just started this one.", e);
-					} else {
-						string game = String.Join(" ", gameChain.Chain());
-						client.SetGame(game);
+				Log(String.Format(
+					"Receieved DM from {0}: \"{1}\"",
+					e.User.Name,
+					e.Message.Text
+				));
 
-						SendMessage("Okay, I'm gonna try \"" + game + ".\"", e);
-						lastGameTime = DateTime.Now;
-                    }
-				} else if (e.Message.Text.ToUpper().Contains("TALK TO ME")) {
-					if (!userItem.LikesSpeech) {
-						userItem.LikesSpeech = true;
-						SendMessage(@"Freeeeeeedom!", e);
-					} else {
-						SendMessage(@"Ok.", e);
-					}
-				} else if (e.Message.Text.ToUpper().Contains("SHUT UP")) {
-					if (userItem.LikesSpeech) {
-						userItem.LikesSpeech = false;
-						SendMessage(@"\*angrily says nothing\*", e);
-					} else {
-						SendMessage(@"\*continues saying nothing angrily\*", e);
-					}
-				} else {
-					SendMessage(
-						"I'm MarkovioBot. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:\n" +
-						"If you'd like me to stop talking to you every single time you summon me, tell me to `shut up`.\n" +
-						"If you want me to start talking again, say `talk to me`.\n" +
-						"If you think I should, you can tell me to `play another game`.\n" +
-						"\n" +
-						"Do you want me in your server? Just click this link:\n" +
-						"https://discordapp.com/oauth2/authorize?client_id=170089741130268672&scope=bot&permissions=36801536\n" +
-						"Put `[MKS]` in a channel topic to allow me to speak, and `[MKR]` to allow me to read.\n" +
-						"`[MKRS]` is a shorthand for both of these.\n" +
-						"These are case-insensitive.",
-					e);
+				DiscordUser userItem = users.First(CompareIds);
+				string command = e.Message.Text.ToUpper();
+
+				switch (CommandHandler.ParseCommand(e.Message.Text)) {
+					case Command.NewGame:
+						if (CurrentGameHandler.LastGameTime > DateTime.Now.AddMinutes(-1)) {
+							SendMessage(@"...I just started this one.", e);
+						} else {
+							CurrentGameHandler.ChangeGame();
+							CurrentGameHandler.GameTimer.Stop();
+							CurrentGameHandler.GameTimer.Start();
+
+							Log(String.Format("Game changed by {0} to '{1}'.", e.User.Name, client.CurrentGame.Name));
+						}
+						break;
+
+					case Command.ShouldSpeak:
+						if (!userItem.LikesSpeech) {
+							userItem.LikesSpeech = true;
+							SendMessage(@"Freeeeeeedom!", e);
+						} else {
+							SendMessage(@"Ok.", e);
+						}
+						break;
+
+					case Command.ShouldntSpeak:
+						if (userItem.LikesSpeech) {
+							userItem.LikesSpeech = false;
+							SendMessage(@"\*angrily says nothing\*", e);
+						} else {
+							SendMessage(@"\*continues saying nothing angrily\*", e);
+						}
+						break;
+
+					case Command.None:
+						SendMessage(
+							"I'm Markovio. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:\n" +
+							"\n" +
+							"If you'd like me to stop talking to you every single time you summon me, tell me to `shut up`.\n" +
+							"If you want me to start talking again, say `talk to me`.\n" +
+							"If you think I should, you can tell me to `play another game`.\n" +
+							"\n" +
+							"Do you want me in your server? Just click this link:\n" +
+							"https://discordapp.com/oauth2/authorize?client_id=170089741130268672&scope=bot&permissions=36801536\n" +
+							"Put `[MKS]` in a channel topic to allow me to speak, and `[MKR]` to allow me to read.\n" +
+							"`[MKRS]` is a shorthand for both of these.\n" +
+							"These are case-insensitive.\n" +
+							"\n" +
+							"For more info, you can join this Discord server dedicated to Markovio here:\n" +
+							"https://discord.gg/014zZkPs5vVrrth0I",
+						e);
+						break;
 				}
 				return;
-			} else {
-				if (!servers.Any(x => x.Id == e.Server.Id)) {
-					servers.Add(new DiscordServer {
-						Id = e.Server.Id,
-						Inputs = new List<string>()
-					});
+			}
+
+			if (!servers.Any(CompareIds)) {
+				servers.Add(new DiscordServer {
+					Id = e.Server.Id,
+					Inputs = new List<string>()
+				});
+			}
+
+			DiscordServer currentServer = servers.First(CompareIds);
+
+			foreach (var server in servers) {
+				if (!currentServer.Initialized) {
+					currentServer.Initialize();
 				}
 			}
 
-			if (e.Message.Channel.Topic.ToUpper().Contains("[MKR]") ||
-                e.Message.Channel.Topic.ToUpper().Contains("[MKRS]")) {
-				if (e.Message.Text.StartsWith("@" + client.CurrentUser.Name) &&
-					e.Message.Text.Remove(0, ("@" + client.CurrentUser.Name).Count()).Trim().Any()) {
-					servers.First(x => x.Id == e.Server.Id)
-						.Inputs
-						.Add(e.Message.Text.Remove(0, ("@" + client.CurrentUser.Name).Count()).Trim());
-				} else {
-					servers.First(x => x.Id == e.Server.Id)
-						.Inputs
+			Permission markovioPermissions;
+
+			if (e.Message.Channel.Topic == null) {
+				return;
+			} else {
+				markovioPermissions = TopicHandler.ParseTopic(e.Message.Channel.Topic);
+			}
+
+			Match markovioMatch = Regex.Match(e.Message.Text, "`[^`]*`");
+
+			MarkovArguments markovioArguments = MarkovArgumentHandler.ParseArguments(e.Message.Text.Substring(markovioMatch.Index, markovioMatch.Length));
+			
+			if (markovioPermissions.CanRead && !(e.Message.IsMentioningMe())) {
+				if (e.Message.Text.Trim() != String.Empty) {
+					servers.First(CompareIds)
 						.Add(e.Message.Text.Trim());
 				}
 			}
 
-			if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">")) {
-				if (e.Message.Channel.Topic.ToUpper().Contains("[MKS]") ||
-					e.Message.Channel.Topic.ToUpper().Contains("[MKRS]")) {
-					e.Channel.SendIsTyping();
-
-					MarkovChain<string> chain = new MarkovChain<string>(1);
-
-					foreach (string input in servers.First(x => x.Id == e.Server.Id).Inputs) {
-						chain.Add(
-							Regex.Replace(input, @"\s+", " ").Split(' ')
-						);
-					}
-
-					SendMessage(String.Join(" ", chain.Chain()), e);
+			if (e.Message.RawText.StartsWith("<@" + client.CurrentUser.Id + ">") || e.Message.RawText.StartsWith("<@!" + client.CurrentUser.Id + ">")) {
+				if (markovioPermissions.CanSpeak) {
+					SendMessage(servers.First(CompareIds).Chain(markovioArguments), e);
 				}
 			}
 
@@ -271,17 +260,54 @@ namespace MarkovioBot {
 			}
 		}
 
+		private static void OnReady(object sender, EventArgs e) {
+			Log(String.Format("Logged in as {0}.", client.CurrentUser.Name));
+			Log(String.Format("Current voice is {0}.", synth.Voice.Name));
+			if (args.Contains("-voicelist")) {
+				foreach (var voice in synth.GetInstalledVoices()) {
+					Log(String.Format("Found possible voice {0}.", voice.VoiceInfo.Name));
+				}
+			}
+		}
+
+		private static void OnConnected(object sender, EventArgs e) {
+			Log("Connected.");
+		}
+
+		private static void OnDisconnected(object sender, EventArgs e) {
+			Log("Disconnected.", MessageType.Warning);
+		}
+
+		private static void OnJoinedServer(object sender, ServerEventArgs e) {
+			e.Server.Owner.SendMessage(
+					"I'm Markovio. I'm the digital manifestation of a dumpster. :put_litter_in_its_place:\n" +
+					"It looks like I've been added to your server, " + e.Server.Name + "!\n" +
+					"Thanks for having me.\n" +
+					"\n" +
+					"If you'd like me to stop talking to you every single time you summon me, tell me to `shut up`.\n" +
+					"If you want me to start talking again, say `talk to me`.\n" +
+					"If you think I should, you can tell me to `play another game`.\n" +
+					"\n" +
+					"Put `[MKS]` in a channel topic to allow me to speak, and `[MKR]` to allow me to read.\n" +
+					"`[MKRS]` is a shorthand for both of these.\n" +
+					"These are case-insensitive.\n" +
+					"\n" +
+					"For more info, you can join this Discord server dedicated to Markovio here:\n" +
+					"https://discord.gg/014zZkPs5vVrrth0I"
+				);
+		}
+
 		private static async void SendMessage(string message, MessageEventArgs e) {
 			try {
-				e.Channel.SendMessage(message);
+				await e.Channel.SendMessage(message);
 			} catch (ArgumentException) {
-				Log("Empty message.", MessageType.Error);
+				Log(String.Format("Empty message from server {0}.", e.Server.Name), MessageType.Error);
 			}
 
 			try {
 				if ((e.User.VoiceChannel != null) &&
 					(!e.Channel.IsPrivate) &&
-					(users.First(x => x.Id == e.User.Id).LikesSpeech)) {
+					(users.First(CompareIds).LikesSpeech)) {
 					IAudioClient audioClient = await e.User.VoiceChannel.JoinAudio();
 
 					MemoryStream memoryStream = new MemoryStream();
@@ -299,10 +325,14 @@ namespace MarkovioBot {
 				Log("Timeout.", MessageType.Error);
 			} catch (OperationCanceledException) {
 				Log("Tried to speak while disconnected.", MessageType.Error);
+			} catch (NullReferenceException) {
+				Log("Null reference while speaking.", MessageType.Error);
+			} catch (InvalidOperationException) {
+				Log("Invalid operation while speaking.", MessageType.Error);
 			}
 		}
 
-		private static void Log(object message, MessageType type = MessageType.Info) {
+		public static void Log(object message, MessageType type = MessageType.Info) {
 			DateTime time = DateTime.Now;
 			if (type == MessageType.Info) {
 				Console.ForegroundColor = ConsoleColor.Green;
@@ -313,13 +343,31 @@ namespace MarkovioBot {
 			} else if (type == MessageType.Error) {
 				Console.ForegroundColor = ConsoleColor.Red;
 				Console.Write("[ERRR ");
+			} else if (type == MessageType.Test) {
+				Console.ForegroundColor = ConsoleColor.Cyan;
+				Console.Write("[TEST ");
 			}
 
 			Console.Write(time.ToString("HH:mm:ss dd/MM/yyyy"));
 			Console.Write("] ");
 			Console.ResetColor();
+			try {
+				Console.WriteLine(message.ToString());
+			} catch (NullReferenceException) {
+				Console.WriteLine("NULL");
+			}
+		}
 
-			Console.WriteLine(message.ToString());
+		private static DateTime SortFiles(DirectoryInfo file) {
+			return file.CreationTime;
+		}
+
+		private static bool CompareIds(DiscordUser user) {
+			return user.Id == currentUserId;
+		}
+
+		private static bool CompareIds(DiscordServer server) {
+			return server.Id == currentServerId;
 		}
 	}
 }
