@@ -106,7 +106,7 @@ namespace MarkovioBot {
 
 			client.UsingAudio(config.Build());
 
-			client.Connect(token);
+			client.Connect("Bot " + token);
 
 			CurrentGameHandler.Initialize();
 
